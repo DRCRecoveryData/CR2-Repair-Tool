@@ -92,7 +92,7 @@ class CR2RepairApp(QWidget):
 
         layout = QVBoxLayout()
 
-        self.reference_label = QLabel("Reference CR2 File:")
+        self.reference_label = QLabel("Reference File:")
         self.reference_path_edit = QLineEdit()
         self.reference_browse_button = QPushButton("Browse", self)
         self.reference_browse_button.setObjectName("browseButton")
