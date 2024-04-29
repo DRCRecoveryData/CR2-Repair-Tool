@@ -94,8 +94,9 @@ class CR2RepairApp(QWidget):
             reference_header[0x62:0x65] = b'\0\0\0'
 
         # Get a list of all CR2 files in the encrypted folder
-        encrypted_files = glob.glob(os.path.join(encrypted_folder_path, '*.CR2.*'))
-
+        #encrypted_files = glob.glob(os.path.join(encrypted_folder_path, '*.CR2.*'))
+        encrypted_files = glob.glob(os.path.join(encrypted_folder_path, '*.CR2*')) #This change in the pattern ('*.CR2*') would match both ".CR2" and ".CR2.xxxx" files in the encrypted folder.
+        
         total_files = len(encrypted_files)
         self.progress_bar.setValue(0)
         self.log_box.clear()
