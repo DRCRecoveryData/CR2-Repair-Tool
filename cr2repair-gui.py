@@ -1,7 +1,85 @@
 import sys
 import os
 import glob
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QProgressBar, QTextEdit, QMessageBox
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QProgressBar, QTextEdit, QMessageBox, QCheckBox
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+import rawpy
+import imageio
+import shutil
+
+class CR2RepairWorker(QThread):
+    progress_updated = pyqtSignal(int)
+    log_updated = pyqtSignal(str)
+    repair_finished = pyqtSignal(str)
+
+    def __init__(self, reference_file_path, encrypted_folder_path, convert_to_tiff, convert_folder):
+        super().__init__()
+        self.reference_file_path = reference_file_path
+        self.encrypted_folder_path = encrypted_folder_path
+        self.convert_to_tiff = convert_to_tiff
+        self.convert_folder = convert_folder
+
+    def run(self):
+        # Create the "Repaired" folder if it doesn't exist
+        repaired_folder_path = os.path.join(self.encrypted_folder_path, "Repaired")
+        os.makedirs(repaired_folder_path, exist_ok=True)
+
+        # Create the "Converted" folder if converting to TIFF
+        if self.convert_to_tiff:
+            converted_folder_path = os.path.join(self.encrypted_folder_path, "Converted")
+            os.makedirs(converted_folder_path, exist_ok=True)
+
+        # Load reference header from the reference file
+        with open(self.reference_file_path, 'rb') as f:
+            buf = bytearray(f.read())
+            pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
+            reference_header = buf[:pos]
+            reference_header[0x62:0x65] = b'\0\0\0'
+
+        # Get a list of all CR2 files in the encrypted folder
+        encrypted_files = glob.glob(os.path.join(self.encrypted_folder_path, '*.CR2.*'))
+
+        total_files = len(encrypted_files)
+
+        # Process each encrypted file
+        for i, encrypted_file in enumerate(encrypted_files):
+            # Get the file name without the extension
+            file_name, _ = os.path.splitext(os.path.basename(encrypted_file))
+
+            # Update progress
+            progress_value = (i + 1) * 100 // total_files
+            self.progress_updated.emit(progress_value)
+
+            # Update log
+            self.log_updated.emit(f"Processing {file_name}...")
+
+            # Get data from the encrypted file
+            with open(encrypted_file, 'rb') as f:
+                buf = bytearray(f.read())
+                pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
+                actual_body = buf[pos:]
+
+            # Write the fixed file to the Repaired folder without any additional extension
+            repaired_file_path = os.path.join(repaired_folder_path, file_name)
+            with open(repaired_file_path, 'wb') as f:
+                f.write(reference_header)
+                f.write(actual_body)
+
+            # Update log
+            self.log_updated.emit(f"{file_name} repaired.")
+
+            # Optionally convert to TIFF
+            if self.convert_to_tiff:
+                with rawpy.imread(repaired_file_path) as raw:
+                    rgb = raw.postprocess()
+                tiff_file = os.path.join(self.convert_folder, file_name + ".tiff")
+                imageio.imsave(tiff_file, rgb)
+                self.log_updated.emit(f"{file_name} converted to TIFF.")
+
+        if self.convert_to_tiff:
+            self.repair_finished.emit(f"Repaired files saved to the 'Repaired' folder.\nTIFF files converted and saved to the 'Converted' folder.")
+        else:
+            self.repair_finished.emit("Repaired files saved to the 'Repaired' folder.")
 
 class CR2RepairApp(QWidget):
     def __init__(self):
@@ -24,6 +102,9 @@ class CR2RepairApp(QWidget):
         self.encrypted_browse_button.setObjectName("browseButton")
         self.encrypted_browse_button.clicked.connect(self.browse_encrypted_folder)
 
+        self.convert_checkbox = QCheckBox("Convert CR2 to TIFF")
+        self.convert_checkbox.stateChanged.connect(self.toggle_convert_checkbox)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -41,6 +122,7 @@ class CR2RepairApp(QWidget):
         layout.addWidget(self.encrypted_label)
         layout.addWidget(self.encrypted_path_edit)
         layout.addWidget(self.encrypted_browse_button)
+        layout.addWidget(self.convert_checkbox)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.log_box)
         layout.addWidget(self.repair_button)
@@ -61,6 +143,9 @@ class CR2RepairApp(QWidget):
         }
         """)
 
+        # Initialize convert_folder attribute
+        self.convert_folder = ""
+
     def browse_reference_file(self):
         reference_file, _ = QFileDialog.getOpenFileName(self, "Select Reference CR2 File", "", "CR2 Files (*.CR2)")
         if reference_file:
@@ -71,9 +156,16 @@ class CR2RepairApp(QWidget):
         if encrypted_folder:
             self.encrypted_path_edit.setText(encrypted_folder)
 
+    def toggle_convert_checkbox(self, state):
+        if state == Qt.CheckState.Checked:
+            self.convert_folder = QFileDialog.getExistingDirectory(self, "Select Converted Folder")
+            if not self.convert_folder:
+                self.convert_checkbox.setChecked(False)
+
     def repair_cr2_files(self):
         reference_file_path = self.reference_path_edit.text()
         encrypted_folder_path = self.encrypted_path_edit.text()
+        convert_to_tiff = self.convert_checkbox.isChecked()
 
         if not os.path.exists(reference_file_path):
             self.show_message("Error", "Reference CR2 file does not exist.")
@@ -82,53 +174,21 @@ class CR2RepairApp(QWidget):
             self.show_message("Error", "Encrypted folder does not exist.")
             return
 
-        # Create the "Repaired" folder if it doesn't exist
-        repaired_folder_path = os.path.join(encrypted_folder_path, "Repaired")
-        os.makedirs(repaired_folder_path, exist_ok=True)
+        # Start worker thread
+        self.worker = CR2RepairWorker(reference_file_path, encrypted_folder_path, convert_to_tiff, self.convert_folder)
+        self.worker.progress_updated.connect(self.update_progress)
+        self.worker.log_updated.connect(self.update_log)
+        self.worker.repair_finished.connect(self.repair_finished)
+        self.worker.start()
 
-        # Load reference header from the reference file
-        with open(reference_file_path, 'rb') as f:
-            buf = bytearray(f.read())
-            pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
-            reference_header = buf[:pos]
-            reference_header[0x62:0x65] = b'\0\0\0'
+    def update_progress(self, value):
+        self.progress_bar.setValue(value)
 
-        # Get a list of all CR2 files in the encrypted folder
-        #encrypted_files = glob.glob(os.path.join(encrypted_folder_path, '*.CR2.*'))
-        encrypted_files = glob.glob(os.path.join(encrypted_folder_path, '*.CR2*')) #This change in the pattern ('*.CR2*') would match both ".CR2" and ".CR2.xxxx" files in the encrypted folder.
-        
-        total_files = len(encrypted_files)
-        self.progress_bar.setValue(0)
-        self.log_box.clear()
+    def update_log(self, message):
+        self.log_box.append(message)
 
-        # Process each encrypted file
-        for i, encrypted_file in enumerate(encrypted_files):
-            # Get the file name without the extension
-            file_name, _ = os.path.splitext(os.path.basename(encrypted_file))
-
-            # Update progress bar
-            progress_value = (i + 1) * 100 // total_files
-            self.progress_bar.setValue(progress_value)
-
-            # Update log box
-            self.log_box.append(f"Processing {file_name}...")
-
-            # Get data from the encrypted file
-            with open(encrypted_file, 'rb') as f:
-                buf = bytearray(f.read())
-                pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
-                actual_body = buf[pos:]
-
-            # Write the fixed file to the Repaired folder without any additional extension
-            repaired_file_path = os.path.join(repaired_folder_path, file_name)
-            with open(repaired_file_path, 'wb') as f:
-                f.write(reference_header)
-                f.write(actual_body)
-
-            # Update log box
-            self.log_box.append(f"{file_name} repaired.")
-
-        self.show_message("Success", f"Repaired files saved to the 'Repaired' folder.")
+    def repair_finished(self, message):
+        self.show_message("Success", message)
 
     def show_message(self, title, message):
         QMessageBox.information(self, title, message)
