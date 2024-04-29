@@ -74,7 +74,7 @@ class CR2RepairWorker(QThread):
                 # Get the base filename without extension
                 base_filename = os.path.splitext(file_name)[0]
                 # Construct the TIFF file path with the base filename and .tiff extension only
-                tiff_file = os.path.join(converted_folder_path, base_filename + ".tiff")
+                tiff_file = os.path.join(converted_folder_path, base_filename + ".TIFF")
                 imageio.imsave(tiff_file, rgb)
                 self.log_updated.emit(f"{base_filename} converted to TIFF.")
 
