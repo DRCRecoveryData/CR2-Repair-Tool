@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLa
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import rawpy
 import imageio
-import shutil
 
 class CR2RepairWorker(QThread):
     progress_updated = pyqtSignal(int)
@@ -72,9 +71,12 @@ class CR2RepairWorker(QThread):
             if self.convert_to_tiff:
                 with rawpy.imread(repaired_file_path) as raw:
                     rgb = raw.postprocess()
-                tiff_file = os.path.join(self.convert_folder, file_name + ".tiff")
+                # Get the base filename without extension
+                base_filename = os.path.splitext(file_name)[0]
+                # Construct the TIFF file path with the base filename and .tiff extension only
+                tiff_file = os.path.join(converted_folder_path, base_filename + ".tiff")
                 imageio.imsave(tiff_file, rgb)
-                self.log_updated.emit(f"{file_name} converted to TIFF.")
+                self.log_updated.emit(f"{base_filename} converted to TIFF.")
 
         if self.convert_to_tiff:
             self.repair_finished.emit(f"Repaired files saved to the 'Repaired' folder.\nTIFF files converted and saved to the 'Converted' folder.")
@@ -174,7 +176,6 @@ class CR2RepairApp(QWidget):
             self.show_message("Error", "Encrypted folder does not exist.")
             return
 
-        # Start worker thread
         self.worker = CR2RepairWorker(reference_file_path, encrypted_folder_path, convert_to_tiff, self.convert_folder)
         self.worker.progress_updated.connect(self.update_progress)
         self.worker.log_updated.connect(self.update_log)
