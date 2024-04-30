@@ -4,10 +4,6 @@
 
 CR2-Repair-Tool is a PyQt6 application for repairing CR2 image files using a reference CR2 file. Provides a user-friendly GUI.
 
-# Demo
-
-![Watch the video](https://github.com/DRCRecoveryData/CR2-Repair-Tool/blob/main/Images/Screencast%20from%202024-04-29%2016-27-41.webm)
-
 ## Requirements
 
 - Python 3.x
