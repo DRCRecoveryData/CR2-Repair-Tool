@@ -63,7 +63,7 @@ class CR2RepairWorker(QThread):
             with open(repaired_file_path, 'wb') as f:
                 f.write(reference_header)
                 f.write(actual_body)
-
+            #f.truncate(f.tell() - 334)  # Remove the last 334 bytes
             # Update log
             self.log_updated.emit(f"{file_name} repaired.")
 
