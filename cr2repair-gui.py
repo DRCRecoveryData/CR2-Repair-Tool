@@ -104,7 +104,6 @@ class CR2RepairWorker(QThread):
     else:
         self.repair_finished.emit("Repaired files saved to the 'Repaired' folder.")
 
-
 class CR2RepairApp(QWidget):
     def __init__(self):
         super().__init__()
