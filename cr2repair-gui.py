@@ -1,7 +1,9 @@
 import sys
 import os
 import glob
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QProgressBar, QTextEdit, QMessageBox, QCheckBox
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QFileDialog, QProgressBar, QTextEdit, QMessageBox, QCheckBox
+)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import rawpy
 import imageio
@@ -19,90 +21,71 @@ class CR2RepairWorker(QThread):
         self.convert_folder = convert_folder
 
     def run(self):
-    # Create the "Repaired" folder if it doesn't exist
-    repaired_folder_path = os.path.join(self.encrypted_folder_path, "Repaired")
-    os.makedirs(repaired_folder_path, exist_ok=True)
+        # Create the "Repaired" folder if it doesn't exist
+        repaired_folder_path = os.path.join(self.encrypted_folder_path, "Repaired")
+        os.makedirs(repaired_folder_path, exist_ok=True)
 
-    # Create the "Converted" folder if converting to TIFF
-    if self.convert_to_tiff:
-        converted_folder_path = os.path.join(self.encrypted_folder_path, "Converted")
-        os.makedirs(converted_folder_path, exist_ok=True)
+        # Create the "Converted" folder if converting to TIFF
+        if self.convert_to_tiff:
+            converted_folder_path = os.path.join(self.encrypted_folder_path, "Converted")
+            os.makedirs(converted_folder_path, exist_ok=True)
 
-    # Load reference header from the reference file
-    with open(self.reference_file_path, 'rb') as f:
-        buf = bytearray(f.read())
-        pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
-        reference_header = buf[:pos]
-        reference_header[0x62:0x65] = b'\0\0\0'
-
-    # Get lists of encrypted and corrupted files
-    encrypted_files = glob.glob(os.path.join(self.encrypted_folder_path, '*.CR2.*'))
-    corrupted_files = glob.glob(os.path.join(self.encrypted_folder_path, '*.CR2'))
-    
-    total_files = len(encrypted_files) + len(corrupted_files)
-
-    # Process each encrypted file
-    for i, encrypted_file in enumerate(encrypted_files):
-        file_name = os.path.basename(encrypted_file).split('.CR2')[0] + '.CR2'
-        progress_value = (i + 1) * 100 // total_files
-        self.progress_updated.emit(progress_value)
-        self.log_updated.emit(f"Processing {file_name}...")
-
-        # Extract data from encrypted file
-        with open(encrypted_file, 'rb') as f:
+        # Load reference header from the reference file
+        with open(self.reference_file_path, 'rb') as f:
             buf = bytearray(f.read())
             pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
-            actual_body = buf[pos:]
+            reference_header = buf[:pos]
+            reference_header[0x62:0x65] = b'\0\0\0'
 
-        # Save repaired file
-        repaired_file_path = os.path.join(repaired_folder_path, file_name)
-        with open(repaired_file_path, 'wb') as f:
-            f.write(reference_header)
-            f.write(actual_body)
+        # Get a list of all encrypted and corrupted CR2 files
+        encrypted_files = glob.glob(os.path.join(self.encrypted_folder_path, '*.CR2.*'))
+        corrupted_files = glob.glob(os.path.join(self.encrypted_folder_path, '*.CR2'))
 
-        self.log_updated.emit(f"{file_name} repaired.")
+        all_files = encrypted_files + corrupted_files
+        total_files = len(all_files)
 
-        # Optionally convert to TIFF
+        # Process each file
+        for i, file_path in enumerate(all_files):
+            # Separate file name logic for encrypted and corrupted files
+            if file_path in encrypted_files:
+                file_name = os.path.basename(file_path).split('.CR2')[0] + '.CR2'
+            else:
+                file_name = os.path.basename(file_path)
+
+            # Update progress
+            progress_value = (i + 1) * 100 // total_files
+            self.progress_updated.emit(progress_value)
+
+            # Update log
+            self.log_updated.emit(f"Processing {file_name}...")
+
+            # Get data from the file
+            with open(file_path, 'rb') as f:
+                buf = bytearray(f.read())
+                pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
+                actual_body = buf[pos:]
+
+            # Write the repaired file to the "Repaired" folder
+            repaired_file_path = os.path.join(repaired_folder_path, file_name)
+            with open(repaired_file_path, 'wb') as f:
+                f.write(reference_header)
+                f.write(actual_body)
+
+            self.log_updated.emit(f"{file_name} repaired.")
+
+            # Optionally convert to TIFF
+            if self.convert_to_tiff:
+                with rawpy.imread(repaired_file_path) as raw:
+                    rgb = raw.postprocess()
+                base_filename = os.path.splitext(file_name)[0]
+                tiff_file = os.path.join(converted_folder_path, base_filename + ".TIFF")
+                imageio.imsave(tiff_file, rgb)
+                self.log_updated.emit(f"{base_filename} converted to TIFF.")
+
         if self.convert_to_tiff:
-            with rawpy.imread(repaired_file_path) as raw:
-                rgb = raw.postprocess()
-            tiff_file = os.path.join(converted_folder_path, file_name.replace(".CR2", ".TIFF"))
-            imageio.imsave(tiff_file, rgb)
-            self.log_updated.emit(f"{file_name} converted to TIFF.")
-
-    # Process each corrupted file (keeping original name)
-    for i, corrupted_file in enumerate(corrupted_files, start=len(encrypted_files)):
-        file_name = os.path.basename(corrupted_file)
-        progress_value = (i + 1) * 100 // total_files
-        self.progress_updated.emit(progress_value)
-        self.log_updated.emit(f"Processing {file_name}...")
-
-        # Extract data from corrupted file
-        with open(corrupted_file, 'rb') as f:
-            buf = bytearray(f.read())
-            pos = buf.rfind(b'\xFF\xD8\xFF\xC4')
-            actual_body = buf[pos:]
-
-        # Save repaired file with original corrupted filename
-        repaired_file_path = os.path.join(repaired_folder_path, file_name)
-        with open(repaired_file_path, 'wb') as f:
-            f.write(reference_header)
-            f.write(actual_body)
-
-        self.log_updated.emit(f"{file_name} repaired.")
-
-        # Optionally convert to TIFF
-        if self.convert_to_tiff:
-            with rawpy.imread(repaired_file_path) as raw:
-                rgb = raw.postprocess()
-            tiff_file = os.path.join(converted_folder_path, file_name.replace(".CR2", ".TIFF"))
-            imageio.imsave(tiff_file, rgb)
-            self.log_updated.emit(f"{file_name} converted to TIFF.")
-
-    if self.convert_to_tiff:
-        self.repair_finished.emit(f"Repaired files saved to the 'Repaired' folder.\nTIFF files converted and saved to the 'Converted' folder.")
-    else:
-        self.repair_finished.emit("Repaired files saved to the 'Repaired' folder.")
+            self.repair_finished.emit(f"Repaired files saved to the 'Repaired' folder.\nTIFF files converted and saved to the 'Converted' folder.")
+        else:
+            self.repair_finished.emit("Repaired files saved to the 'Repaired' folder.")
 
 class CR2RepairApp(QWidget):
     def __init__(self):
@@ -166,7 +149,6 @@ class CR2RepairApp(QWidget):
         }
         """)
 
-        # Initialize convert_folder attribute
         self.convert_folder = ""
 
     def browse_reference_file(self):
